@@ -26,11 +26,11 @@ jobs:
         include:
           - os: windows
             runner: windows-latest
-            preset: windows-msvc
+            preset: windows-ninja
             config: Release
           - os: windows
             runner: windows-latest
-            preset: windows-msvc-debug
+            preset: windows-ninja-debug
             config: Debug
           - os: linux
             runner: ubuntu-latest
@@ -48,12 +48,12 @@ jobs:
         with:
           cmake-version: "3.28"
 
-      - name: Setup Ninja
-        uses: seanmiddleditch/gha-setup-ninja@v5
-
       - name: Setup MSVC
         if: runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Setup Ninja
+        uses: ashutoshvarma/setup-ninja@v1
 
       - name: Configure
         run: cmake --preset ${{ matrix.preset }}

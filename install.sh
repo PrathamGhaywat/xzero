@@ -20,7 +20,7 @@ done
 OS="$(uname -s 2>/dev/null || echo unknown)"
 case "$OS" in
   Linux*) OS=linux ;;
-  Darwin*) OS=darwin ;;
+  Darwin*) OS=macos ;;
   MINGW*|MSYS*|CYGWIN*) OS=windows ;;
   *) echo "Unsupported OS: $OS" >&2; exit 1 ;;
 esac
@@ -55,7 +55,7 @@ case "$VERSION" in
   *) VERSION="v$VERSION" ;;
 esac
 
-# Artifact name matches release.yml: xzero-<version>-<os>-<arch>.tar.gz (darwin/linux) or .zip (windows)
+# Artifact name matches release.yml: xzero-<version>-<os>-<arch>.tar.gz (macos/linux) or .zip (windows)
 if [ "$OS" = "windows" ]; then
   ARTIFACT="xzero-${VERSION}-${OS}-${ARCH}.zip"
 else
@@ -70,16 +70,41 @@ echo "Downloading $URL"
 TMPDIR="$(mktemp -d 2>/dev/null || mktemp -d -t xzero)"
 trap 'rm -rf "$TMPDIR"' EXIT INT TERM
 
-# Download
+# Download (with fallback for old darwin naming)
+download_with_fallback() {
+  _url="$1"; _out="$2"
+  if command -v curl >/dev/null 2>&1; then
+    curl -fL --progress-bar -o "$_out" "$_url" 2>&1 && return 0
+    return 1
+  elif command -v wget >/dev/null 2>&1; then
+    wget -O "$_out" "$_url" && return 0
+    return 1
+  else
+    echo "Need curl or wget" >&2; exit 1
+  fi
+}
+
+if ! download_with_fallback "$URL" "$TMPDIR/$ARTIFACT"; then
+  # Fallback for v0.1.0 which used darwin instead of macos
+  if [ "$OS" = "macos" ]; then
+    OLD_ARTIFACT="xzero-${VERSION}-darwin-${ARCH}.tar.gz"
+    OLD_URL="https://github.com/${REPO}/releases/download/${VERSION}/${OLD_ARTIFACT}"
+    echo "Retrying with legacy name $OLD_ARTIFACT"
+    if download_with_fallback "$OLD_URL" "$TMPDIR/$ARTIFACT"; then
+      ARTIFACT="$OLD_ARTIFACT"
+      URL="$OLD_URL"
+    else
+      echo "Download failed: $URL" >&2; exit 1
+    fi
+  else
+    echo "Download failed: $URL" >&2; exit 1
+  fi
+fi
+# Try SHA256SUMS (best effort)
 if command -v curl >/dev/null 2>&1; then
-  curl -fL --progress-bar -o "$TMPDIR/$ARTIFACT" "$URL" || { echo "Download failed: $URL" >&2; exit 1; }
-  # Try SHA256SUMS (best effort)
   curl -fsSL -o "$TMPDIR/SHA256SUMS" "$SHA_URL" 2>/dev/null || true
 elif command -v wget >/dev/null 2>&1; then
-  wget -O "$TMPDIR/$ARTIFACT" "$URL" || { echo "Download failed" >&2; exit 1; }
   wget -qO "$TMPDIR/SHA256SUMS" "$SHA_URL" 2>/dev/null || true
-else
-  echo "Need curl or wget" >&2; exit 1
 fi
 
 # Verify checksum if available

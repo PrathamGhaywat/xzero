@@ -3,7 +3,25 @@
   "configurePresets": [
     {
       "name": "windows-msvc",
-      "displayName": "Windows MSVC",
+      "displayName": "Windows MSVC (Visual Studio)",
+      "generator": "Visual Studio 17 2022",
+      "binaryDir": "${sourceDir}/build",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+    {
+      "name": "windows-msvc-debug",
+      "displayName": "Windows MSVC Debug (Visual Studio)",
+      "generator": "Visual Studio 17 2022",
+      "binaryDir": "${sourceDir}/build-debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    },
+    {
+      "name": "windows-ninja",
+      "displayName": "Windows Ninja (MSVC, for CI)",
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/build",
       "cacheVariables": {
@@ -12,8 +30,8 @@
       }
     },
     {
-      "name": "windows-msvc-debug",
-      "displayName": "Windows MSVC Debug",
+      "name": "windows-ninja-debug",
+      "displayName": "Windows Ninja Debug (for CI)",
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/build-debug",
       "cacheVariables": {

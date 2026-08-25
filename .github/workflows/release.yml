@@ -27,7 +27,7 @@ jobs:
             arch: x64
             cmake_args: ""
             artifact: xzero-windows-x64.exe
-            preset: windows-msvc
+            preset: windows-ninja
 
           - name: windows-arm64
             runner: windows-latest
@@ -35,7 +35,7 @@ jobs:
             arch: arm64
             cmake_args: ""
             artifact: xzero-windows-arm64.exe
-            preset: windows-msvc
+            preset: windows-ninja
 
           - name: linux-x64
             runner: ubuntu-latest
@@ -51,18 +51,18 @@ jobs:
             artifact: xzero-linux-arm64
             preset: linux-gcc
 
-          - name: darwin-x64
+          - name: macos-x64
             runner: macos-13
-            os: darwin
+            os: macos
             arch: x64
-            artifact: xzero-darwin-x64
+            artifact: xzero-macos-x64
             preset: macos-clang
 
-          - name: darwin-arm64
+          - name: macos-arm64
             runner: macos-14
-            os: darwin
+            os: macos
             arch: arm64
-            artifact: xzero-darwin-arm64
+            artifact: xzero-macos-arm64
             preset: macos-clang
 
     steps:
@@ -73,14 +73,14 @@ jobs:
         with:
           cmake-version: "3.28"
 
-      - name: Setup Ninja
-        uses: seanmiddleditch/gha-setup-ninja@v5
-
       - name: Setup MSVC (Windows)
         if: runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: ${{ matrix.arch }}
+
+      - name: Setup Ninja
+        uses: ashutoshvarma/setup-ninja@v1
 
       - name: Configure
         run: cmake --preset ${{ matrix.preset }} ${{ matrix.cmake_args }} -DCMAKE_BUILD_TYPE=Release
@@ -119,7 +119,11 @@ jobs:
           mkdir -p dist
           cp build/xzero "dist/${{ matrix.artifact }}" || cp build/Release/xzero "dist/${{ matrix.artifact }}" || cp build/xzero "dist/${{ matrix.artifact }}"
           chmod +x "dist/${{ matrix.artifact }}"
-          (cd dist && sha256sum "${{ matrix.artifact }}" > SHA256SUMS)
+          if command -v sha256sum >/dev/null 2>&1; then
+            (cd dist && sha256sum "${{ matrix.artifact }}" > SHA256SUMS)
+          else
+            (cd dist && shasum -a 256 "${{ matrix.artifact }}" > SHA256SUMS)
+          fi
           tar -C dist -czf "xzero-${ver}-${{ matrix.os }}-${{ matrix.arch }}.tar.gz" "${{ matrix.artifact }}" SHA256SUMS
           ls -lh dist/ *.tar.gz || true
           ls -lh xzero-*.tar.gz || true

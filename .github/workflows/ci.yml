@@ -29,7 +29,7 @@ jobs:
             preset: linux-gcc
           - os: windows
             runner: windows-latest
-            preset: windows-msvc
+            preset: windows-ninja
           - os: macos
             runner: macos-14
             preset: macos-clang
@@ -41,12 +41,12 @@ jobs:
         with:
           cmake-version: "3.28"
 
-      - name: Setup Ninja
-        uses: seanmiddleditch/gha-setup-ninja@v5
-
       - name: Setup MSVC
         if: runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Setup Ninja
+        uses: ashutoshvarma/setup-ninja@v1
 
       - name: Configure
         run: cmake --preset ${{ matrix.preset }} -DCMAKE_BUILD_TYPE=Release
