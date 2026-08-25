@@ -57,13 +57,19 @@ if(NOT CURL_FOUND)
 set(BUILD_TESTING ON CACHE BOOL "" FORCE)
 endif()
 
-# cJSON via FetchContent
+# cJSON via FetchContent - force static, no own tests
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+set(ENABLE_CJSON_TEST OFF CACHE BOOL "" FORCE)
+set(ENABLE_CJSON_UTILS OFF CACHE BOOL "" FORCE)
+set(CJSON_TESTS OFF CACHE BOOL "" FORCE)
+set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
 FetchContent_Declare(
     cJSON
     URL https://github.com/DaveGamble/cJSON/archive/refs/tags/v1.7.18.tar.gz
     URL_HASH SHA256=3aa806844a03442c00769b83e99970be70fbef03735ff898f4811dd03b9f5ee5
 )
 FetchContent_MakeAvailable(cJSON)
+set(BUILD_TESTING ON CACHE BOOL "" FORCE)
 
 # Sources
 set(XZERO_SOURCES
