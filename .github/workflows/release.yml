@@ -25,6 +25,7 @@ jobs:
             runner: windows-latest
             os: windows
             arch: x64
+            msvc_arch: x64
             cmake_args: ""
             artifact: xzero-windows-x64.exe
             preset: windows-ninja
@@ -33,6 +34,7 @@ jobs:
             runner: windows-latest
             os: windows
             arch: arm64
+            msvc_arch: x64_arm64
             cmake_args: ""
             artifact: xzero-windows-arm64.exe
             preset: windows-ninja
@@ -77,16 +79,23 @@ jobs:
         if: runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@v1
         with:
-          arch: ${{ matrix.arch }}
+          arch: ${{ matrix.msvc_arch }}
+          vsversion: 2022
 
       - name: Verify MSVC Setup (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          cl.exe
-          cmake.exe --version
-          ninja --version
-          Get-Command cl.exe | Format-List
+          $cl = Get-Command cl.exe -ErrorAction SilentlyContinue
+          if (-not $cl) {
+            Write-Host "MSVC not found, trying where.exe..."
+            where.exe cl.exe || Get-ChildItem -Path "C:\Program Files\Microsoft Visual Studio" -Recurse -Filter cl.exe | Select-Object -First 3 | Format-List FullName
+            throw "MSVC compiler not available after setup."
+          }
+          & cl.exe
+          & cmake.exe --version
+          & ninja --version
+          $cl | Format-List
 
       - name: Ensure Ninja
         shell: bash
