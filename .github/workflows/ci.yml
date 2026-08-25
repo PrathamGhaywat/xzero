@@ -45,6 +45,15 @@ jobs:
         if: runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@v1
 
+      - name: Verify MSVC Setup (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cl.exe
+          cmake.exe --version
+          ninja --version
+          Get-Command cl.exe | Format-List
+
       - name: Ensure Ninja
         shell: bash
         run: |
@@ -56,6 +65,7 @@ jobs:
           which ninja || where ninja || echo "ninja at $(command -v ninja)"
 
       - name: Configure
+        shell: ${{ runner.os == 'Windows' && 'pwsh' || 'bash' }}
         run: cmake --preset ${{ matrix.preset }} -DCMAKE_BUILD_TYPE=Release
 
       - name: Build
