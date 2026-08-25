@@ -80,7 +80,6 @@ jobs:
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: ${{ matrix.msvc_arch }}
-          vsversion: 2022
 
       - name: Verify MSVC Setup (Windows)
         if: runner.os == 'Windows'
