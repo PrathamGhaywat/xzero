@@ -20,19 +20,19 @@ Chat with your codebase, read and edit files, run commands, and let the agent ha
 
 ```bash
 # macOS / Linux
-curl -fsSL https://raw.githubusercontent.com/xzero/xzero/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/PrathamGhaywat/xzero/main/install.sh | sh
 # pin version
-curl -fsSL https://raw.githubusercontent.com/xzero/xzero/main/install.sh | sh -s -- v0.1.0
+curl -fsSL https://raw.githubusercontent.com/PrathamGhaywat/xzero/main/install.sh | sh -s -- v0.1.0
 
 # Windows PowerShell (run as user, no admin needed)
-irm https://raw.githubusercontent.com/xzero/xzero/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/PrathamGhaywat/xzero/main/install.ps1 | iex
 # pin version
-irm https://raw.githubusercontent.com/xzero/xzero/main/install.ps1 | iex; Install-Xzero -Version v0.1.0
+irm https://raw.githubusercontent.com/PrathamGhaywat/xzero/main/install.ps1 | iex; Install-Xzero -Version v0.1.0
 ```
 
 Installs to `~/.local/bin/xzero` (or `%USERPROFILE%\.local\bin\xzero.exe` on Windows). Add that dir to your `PATH` if needed. Override with `XZERO_INSTALL_DIR` or `XZERO_REPO` (e.g. `XZERO_REPO=your-org/xzero`).
 
-Or download manually from [Releases](https://github.com/xzero/xzero/releases) — `xzero-<os>-<arch>.tar.gz` / `.zip` + `SHA256SUMS`.
+Or download manually from [Releases](https://github.com/PrathamGhaywat/xzero/releases) — `xzero-<os>-<arch>.tar.gz` / `.zip` + `SHA256SUMS`.
 
 **Build from source:**
 
