@@ -1,0 +1,111 @@
+name: CI (main)
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "0 3 * * 1"  # weekly Monday 03:00 UTC
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+
+jobs:
+  build-test:
+    name: build-${{ matrix.os }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: linux
+            runner: ubuntu-latest
+            preset: linux-gcc
+          - os: windows
+            runner: windows-latest
+            preset: windows-msvc
+          - os: macos
+            runner: macos-14
+            preset: macos-clang
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup CMake
+        uses: jwlawson/actions-setup-cmake@v2
+        with:
+          cmake-version: "3.28"
+
+      - name: Setup Ninja (Unix)
+        if: runner.os != 'Windows'
+        uses: seanmiddleditch/gha-setup-ninja@v5
+
+      - name: Setup MSVC
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Configure
+        run: cmake --preset ${{ matrix.preset }} -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Test
+        run: ctest --test-dir build -C Release --output-on-failure
+
+      - name: Smoke run
+        run: |
+          ./build/Release/xzero --help 2>&1 | head -n 20 || ./build/xzero --help 2>&1 | head -n 20 || ./build/Release/xzero.exe --help 2>&1 | head -n 20 || true
+        shell: bash
+
+  # Quick security baseline on main (full scan is in PR)
+  trivy:
+    name: Trivy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: fs
+          severity: CRITICAL,HIGH
+          format: sarif
+          output: trivy.sarif
+      - uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy.sarif
+
+  codeql:
+    name: CodeQL
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: cpp
+      - run: |
+          cmake --preset linux-gcc -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --parallel
+      - uses: github/codeql-action/analyze@v3
+
+  # Keep install scripts healthy
+  install-smoke:
+    name: install-smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: shellcheck install.sh
+        run: shellcheck install.sh
+      - name: Dry-run install.sh
+        run: |
+          bash -n install.sh
+          echo "install.sh syntax OK"

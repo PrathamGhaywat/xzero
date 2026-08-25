@@ -1,0 +1,169 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to release (e.g. v0.1.0)"
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: windows-x64
+            runner: windows-latest
+            os: windows
+            arch: x64
+            cmake_args: "-A x64"
+            artifact: xzero-windows-x64.exe
+            preset: windows-msvc
+
+          - name: windows-arm64
+            runner: windows-latest
+            os: windows
+            arch: arm64
+            cmake_args: "-A ARM64"
+            artifact: xzero-windows-arm64.exe
+            preset: windows-msvc
+
+          - name: linux-x64
+            runner: ubuntu-latest
+            os: linux
+            arch: x64
+            artifact: xzero-linux-x64
+            preset: linux-gcc
+
+          - name: linux-arm64
+            runner: ubuntu-24.04-arm
+            os: linux
+            arch: arm64
+            artifact: xzero-linux-arm64
+            preset: linux-gcc
+
+          - name: darwin-x64
+            runner: macos-13
+            os: darwin
+            arch: x64
+            artifact: xzero-darwin-x64
+            preset: macos-clang
+
+          - name: darwin-arm64
+            runner: macos-14
+            os: darwin
+            arch: arm64
+            artifact: xzero-darwin-arm64
+            preset: macos-clang
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup CMake
+        uses: jwlawson/actions-setup-cmake@v2
+        with:
+          cmake-version: "3.28"
+
+      - name: Setup Ninja (Linux/macOS)
+        if: runner.os != 'Windows'
+        uses: seanmiddleditch/gha-setup-ninja@v5
+
+      - name: Setup MSVC (Windows)
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: ${{ matrix.arch }}
+
+      - name: Configure
+        run: cmake --preset ${{ matrix.preset }} ${{ matrix.cmake_args }} -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Test
+        run: ctest --test-dir build -C Release --output-on-failure
+
+      - name: Prepare artifact (Windows)
+        if: matrix.os == 'windows'
+        shell: pwsh
+        run: |
+          $ver = "${{ github.ref_name }}"
+          if (-not $ver) { $ver = "${{ inputs.tag }}" }
+          if (-not $ver -or $ver -eq "") { $ver = "dev" }
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item -Path build/Release/xzero.exe -Destination "dist/${{ matrix.artifact }}"
+          Push-Location dist
+          $hash = (Get-FileHash "${{ matrix.artifact }}" -Algorithm SHA256).Hash.ToLower()
+          "$hash  ${{ matrix.artifact }}" | Out-File -Encoding ascii SHA256SUMS
+          Compress-Archive -Path "${{ matrix.artifact }}",SHA256SUMS -DestinationPath "xzero-$ver-${{ matrix.os }}-${{ matrix.arch }}.zip" -Force
+          Get-ChildItem
+
+      - name: Prepare artifact (Unix)
+        if: matrix.os != 'windows'
+        shell: bash
+        run: |
+          ver="${{ github.ref_name }}"
+          if [ -z "$ver" ]; then ver="${{ inputs.tag }}"; fi
+          if [ -z "$ver" ]; then ver="dev"; fi
+          mkdir -p dist
+          cp build/xzero "dist/${{ matrix.artifact }}" || cp build/Release/xzero "dist/${{ matrix.artifact }}" || cp build/xzero "dist/${{ matrix.artifact }}"
+          chmod +x "dist/${{ matrix.artifact }}"
+          (cd dist && sha256sum "${{ matrix.artifact }}" > SHA256SUMS)
+          tar -C dist -czf "xzero-${ver}-${{ matrix.os }}-${{ matrix.arch }}.tar.gz" "${{ matrix.artifact }}" SHA256SUMS
+          ls -lh dist/ *.tar.gz || true
+          ls -lh xzero-*.tar.gz || true
+          mkdir -p upload
+          mv "xzero-${ver}-${{ matrix.os }}-${{ matrix.arch }}.tar.gz" upload/
+          cp dist/SHA256SUMS "upload/SHA256SUMS-${{ matrix.os }}-${{ matrix.arch }}.txt" || true
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: |
+            dist/*
+            upload/*
+            xzero-*.zip
+            xzero-*.tar.gz
+          if-no-files-found: warn
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -R artifacts
+
+      - name: Generate checksums
+        run: |
+          cd artifacts
+          sha256sum xzero-* 2>/dev/null | tee SHA256SUMS || true
+          cat SHA256SUMS || true
+          ls -lh
+
+      - name: Publish Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/xzero-*.zip
+            artifacts/xzero-*.tar.gz
+            artifacts/SHA256SUMS*
+          generate_release_notes: true
+          fail_on_unmatched_files: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
