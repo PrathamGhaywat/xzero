@@ -99,7 +99,7 @@ jobs:
           which ninja || where ninja || echo "ninja at $(command -v ninja)"
 
       - name: Configure
-        shell: ${{ runner.os == 'Windows' && 'pwsh' || 'bash' }}
+        shell: bash
         run: cmake --preset ${{ matrix.preset }} ${{ matrix.cmake_args }} -DCMAKE_BUILD_TYPE=Release
 
       - name: Build
