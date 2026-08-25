@@ -80,7 +80,10 @@ jobs:
         run: cmake --build build --config Release --parallel
 
       - name: Test
-        run: ctest --test-dir build -C Release --output-on-failure
+        shell: bash
+        run: |
+          export PATH="$PWD/build/_deps/cjson-build:$PWD/build/_deps/cjson-build/Release:$PWD/build/_deps/curl-build/lib:$PWD/build/_deps/curl-build/lib/Release:$PATH"
+          ctest --test-dir build --output-on-failure || ctest --test-dir build -C Release --output-on-failure
 
       - name: Smoke run
         run: |
