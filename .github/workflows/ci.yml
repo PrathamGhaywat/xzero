@@ -41,8 +41,7 @@ jobs:
         with:
           cmake-version: "3.28"
 
-      - name: Setup Ninja (Unix)
-        if: runner.os != 'Windows'
+      - name: Setup Ninja
         uses: seanmiddleditch/gha-setup-ninja@v5
 
       - name: Setup MSVC

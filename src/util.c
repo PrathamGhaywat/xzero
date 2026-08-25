@@ -16,6 +16,14 @@
 #include <limits.h>
 #include <errno.h>
 #define MKDIR(p) mkdir(p, 0755)
+#ifndef PATH_MAX
+#ifdef __linux__
+#include <linux/limits.h>
+#endif
+#ifndef PATH_MAX
+#define PATH_MAX 4096
+#endif
+#endif
 #endif
 
 #define CAP_BYTES (50*1024)
@@ -103,6 +111,7 @@ size_t util_estimate_tokens(const char *s) {
     return strlen(s)/4 + 1;
 }
 size_t util_estimate_tokens_n(const char *s, size_t n) {
+    (void)s;
     return n/4 + 1;
 }
 
@@ -173,10 +182,7 @@ bool util_path_is_within_cwd(const char *path) {
     char resolved[PATH_MAX];
     if (path[0]=='/') {
         if (!realpath(path, resolved)) {
-            // file may not exist - resolve parent
-            char tmp[PATH_MAX];
-            snprintf(tmp, sizeof(tmp), "%s", path);
-            // fallback: join cwd check via string prefix
+            // file may not exist - fallback to prefix check
             if (strncmp(path, cwd, strlen(cwd))==0) return true;
             return false;
         }
@@ -185,13 +191,7 @@ bool util_path_is_within_cwd(const char *path) {
         snprintf(joined, sizeof(joined), "%s/%s", cwd, path);
         if (!realpath(joined, resolved)) {
             // not existing yet - check prefix
-            char abs_joined[PATH_MAX*2];
-            // normalize ../
-            // simple check: does joined start with cwd?
-            // For non-existent files, we conservatively check string prefix after normalizing
-            // remove ./ and handle ../ quickly
             if (strncmp(joined, cwd, strlen(cwd))==0) return true;
-            // try to check parent exists
             return true; // permissive for new files within cwd string
         }
     }

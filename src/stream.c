@@ -186,7 +186,6 @@ int stream_sse_callback(const char *chunk, size_t len, void *user) {
     if (!last_nl) return 1;
     size_t process_len = last_nl - s->buffer + 1;
     // Iterate lines
-    char *line_start = s->buffer;
     char *ptr = s->buffer;
     while (ptr < s->buffer + process_len) {
         char *nl = strchr(ptr, '\n');

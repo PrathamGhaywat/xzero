@@ -25,10 +25,9 @@ void session_get_dir(char *out, size_t n) {
         util_path_join(out, n, "./.xzero", "sessions");
         return;
     }
-    // global
-    char global[XZERO_PATH_MAX];
     // reuse config path logic but for sessions
 #ifdef _WIN32
+    char global[XZERO_PATH_MAX];
     char *appdata = getenv("APPDATA");
     if (appdata) {
         util_path_join(global, sizeof(global), appdata, "xzero/sessions");

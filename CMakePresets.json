@@ -4,18 +4,20 @@
     {
       "name": "windows-msvc",
       "displayName": "Windows MSVC",
-      "generator": "Visual Studio 17 2022",
+      "generator": "Ninja",
       "binaryDir": "${sourceDir}/build",
       "cacheVariables": {
+        "CMAKE_C_COMPILER": "cl",
         "CMAKE_BUILD_TYPE": "Release"
       }
     },
     {
       "name": "windows-msvc-debug",
       "displayName": "Windows MSVC Debug",
-      "generator": "Visual Studio 17 2022",
+      "generator": "Ninja",
       "binaryDir": "${sourceDir}/build-debug",
       "cacheVariables": {
+        "CMAKE_C_COMPILER": "cl",
         "CMAKE_BUILD_TYPE": "Debug"
       }
     },
