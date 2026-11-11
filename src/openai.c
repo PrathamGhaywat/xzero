@@ -111,12 +111,16 @@ int openai_test_connection(const XZeroConfig *cfg, char *err, size_t err_n) {
 }
 
 char *openai_build_payload(const XZeroConfig *cfg, cJSON *messages, cJSON *tools, bool stream) {
+    return openai_build_payload_ex(cfg, messages, tools, stream, true);
+}
+
+char *openai_build_payload_ex(const XZeroConfig *cfg, cJSON *messages, cJSON *tools, bool stream, bool include_optional) {
     cJSON *root = cJSON_CreateObject();
     cJSON_AddStringToObject(root, "model", cfg->model[0]? cfg->model : "gpt-4o-mini");
     cJSON_AddNumberToObject(root, "temperature", 0.2);
     if (stream) cJSON_AddBoolToObject(root, "stream", true);
     // Lever #2: include stream_options for usage on streaming
-    if (stream) {
+    if (stream && include_optional) {
         cJSON *so = cJSON_CreateObject();
         cJSON_AddBoolToObject(so, "include_usage", true);
         cJSON_AddItemToObject(root, "stream_options", so);
@@ -138,9 +142,10 @@ char *openai_build_payload(const XZeroConfig *cfg, cJSON *messages, cJSON *tools
         cJSON_AddStringToObject(root, "tool_choice", "auto");
     }
     // Lever #2: prompt cache key via extra field for providers that support it (e.g., OpenAI prompt_cache_key)
-    // This does not break OpenAI spec - unknown fields are ignored by strict servers but help caching on supporting ones.
     // We also set parallel_tool_calls true to allow batch execution (Lever #4).
-    cJSON_AddBoolToObject(root, "parallel_tool_calls", true);
+    // Older/stricter OpenAI-compatible servers may reject unknown fields, so
+    // the agent retries without these when it receives a 400/422.
+    if (include_optional) cJSON_AddBoolToObject(root, "parallel_tool_calls", true);
 
     char *out = cJSON_PrintUnformatted(root);
     cJSON_Delete(root);

@@ -4,6 +4,7 @@
 #include "stream.h"
 #include "tools/registry.h"
 #include "util.h"
+#include "prompt.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -34,13 +35,14 @@ int agent_run_turn(AgentOpts *opts, const char *user_message){
 
     int iter=0;
     int max_iter = opts->max_iterations ? opts->max_iterations : 32;
+    bool include_optional=true;
 
     while(iter < max_iter){
         iter++;
         // Build payload with cache-aware ordering
         cJSON *messages = session_messages_for_api(opts->session);
         cJSON *tools = tools_build_openai_array();
-        char *payload = openai_build_payload(opts->cfg, messages, tools, true);
+        char *payload = openai_build_payload_ex(opts->cfg, messages, tools, true, include_optional);
         cJSON_Delete(messages);
         cJSON_Delete(tools);
         if(!payload){ fprintf(stderr,"[xzero] oom building payload\n"); return -1; }
@@ -61,16 +63,23 @@ int agent_run_turn(AgentOpts *opts, const char *user_message){
         free(payload);
         free(url);
         if(rc!=0){
-            fprintf(stderr,"\n[xzero] HTTP stream error (iter %d). Check base_url/model/api_key.\n", iter);
+            // Some OpenAI-compatible servers reject optional fields. Retry
+            // once without them before surfacing the error.
+            bool retry_compat = include_optional && (result.http_status==400 || result.http_status==422);
+            if(retry_compat){
+                include_optional=false;
+                if(opts->verbose) fprintf(stderr,"[xzero] retrying without optional payload fields\n");
+                stream_result_free(&result);
+                continue;
+            }
+            if(result.error){
+                fprintf(stderr,"\n[xzero] request failed (iter %d): %s\n", iter, result.error);
+            } else {
+                fprintf(stderr,"\n[xzero] HTTP stream error (iter %d). Check base_url/model/api_key.\n", iter);
+            }
             if(result.content_delta && result.content_len>0) printf("\n%s\n", result.content_delta);
             if(result.finish_reason) fprintf(stderr,"finish_reason: %s\n", result.finish_reason);
             stream_result_free(&result);
-            // Don't hard-fail: append error to session so LLM can see, but also allow user to retry
-            cJSON *err_msg=cJSON_CreateObject();
-            cJSON_AddStringToObject(err_msg,"role","system");
-            cJSON_AddStringToObject(err_msg,"content","[xzero] HTTP error - previous LLM call failed. Try again or check connection.]");
-            session_append(opts->session, err_msg);
-            cJSON_Delete(err_msg);
             return -1;
         }
         // Ensure newline after streaming content
@@ -109,7 +118,7 @@ int agent_run_turn(AgentOpts *opts, const char *user_message){
         cJSON_Delete(assistant);
 
         // If no tool calls, we are done (Lever #4: deterministic stop - when every tool in batch finishes, loop stops)
-        if(tool_n==0 || cJSON_GetArraySize(result.tool_calls)==0 || (result.tool_calls && cJSON_GetArraySize(result.tool_calls)==0)){
+        if(tool_n==0){
             // No tools -> final answer
             if(result.finish_reason) {
                 if(opts->verbose) fprintf(stderr,"[xzero] finish: %s (prompt %d, completion %d)\n", result.finish_reason, result.prompt_tokens, result.completion_tokens);
@@ -120,7 +129,6 @@ int agent_run_turn(AgentOpts *opts, const char *user_message){
                 }
             }
             stream_result_free(&result);
-            session_save(opts->session);
             break;
         }
 
@@ -181,21 +189,19 @@ int agent_run_turn(AgentOpts *opts, const char *user_message){
                 }
             }
 
-            // Approval for write/edit/bash
+            // Approval for write/edit/bash. prompt_confirm denies on EOF,
+            // so non-interactive runs can never auto-approve tools.
             if(tools_needs_approval(tname)){
-                printf("   Approve %s? [y/N]: ", tname);
-                fflush(stdout);
-                char buf[16];
-                if(fgets(buf,sizeof(buf),stdin)){
-                    if(buf[0]!='y' && buf[0]!='Y'){
-                        cJSON *tool_msg=cJSON_CreateObject();
-                        cJSON_AddStringToObject(tool_msg,"role","tool");
-                        cJSON_AddStringToObject(tool_msg,"tool_call_id", tid);
-                        cJSON_AddStringToObject(tool_msg,"content","permission denied by user");
-                        session_append(opts->session, tool_msg);
-                        cJSON_Delete(tool_msg);
-                        continue;
-                    }
+                char promptbuf[256];
+                snprintf(promptbuf,sizeof(promptbuf),"   Approve %s?",tname);
+                if(!prompt_confirm(promptbuf,false)){
+                    cJSON *tool_msg=cJSON_CreateObject();
+                    cJSON_AddStringToObject(tool_msg,"role","tool");
+                    cJSON_AddStringToObject(tool_msg,"tool_call_id", tid);
+                    cJSON_AddStringToObject(tool_msg,"content","permission denied by user");
+                    session_append(opts->session, tool_msg);
+                    cJSON_Delete(tool_msg);
+                    continue;
                 }
             }
 
@@ -225,5 +231,9 @@ int agent_run_turn(AgentOpts *opts, const char *user_message){
     if(iter>=max_iter){
         printf("\n[xzero] max iterations (%d) reached\n", max_iter);
     }
+    // Compact only at turn boundaries so an assistant tool_calls message is
+    // never separated from its tool results.
+    session_maybe_compact(opts->session);
+    session_save(opts->session);
     return 0;
 }

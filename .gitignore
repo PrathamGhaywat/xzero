@@ -12,3 +12,5 @@ build-*/
 *.dylib
 .cache/
 tmp/
+__pycache__/
+*.pyc

@@ -15,9 +15,11 @@ cmake --build build --config Release
 3. Run tests:
 
 ```bash
-./build/Release/test_config
-./build/Release/test_stream
+ctest --test-dir build -C Release --output-on-failure
 ```
+
+The integration test needs Python 3; it is skipped automatically if Python is
+not found. Use `-DBUILD_TESTING=OFF` to skip building tests.
 
 ## Project Structure
 

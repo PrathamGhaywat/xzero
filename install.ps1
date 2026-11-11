@@ -8,7 +8,7 @@ param(
   [string]$Repo = $env:XZERO_REPO
 )
 
-if (-not $Repo -or $Repo -eq "") { $Repo = "xzero/xzero" }
+if (-not $Repo -or $Repo -eq "") { $Repo = "PrathamGhaywat/xzero" }
 if ($env:XZERO_INSTALL_DIR) { $InstallDir = $env:XZERO_INSTALL_DIR }
 
 # Detect arch — modern only
@@ -60,14 +60,21 @@ try {
 # Try verify
 try {
   $sha = Invoke-WebRequest -Uri $shaUrl -UseBasicParsing -ErrorAction SilentlyContinue
-  if ($sha -and $sha.Content -match $artifact) {
-    $expected = ($sha.Content -split "`n" | Where-Object { $_ -match $artifact } | ForEach-Object { ($_ -split '\s+')[0] })[0]
+  $line = $null
+  if ($sha) {
+    $line = ($sha.Content -split "`n" | Where-Object { $_.Trim().EndsWith($artifact) } | Select-Object -First 1)
+  }
+  if ($line) {
+    $expected = ($line -split '\s+')[0]
     $actual = (Get-FileHash $zipPath -Algorithm SHA256).Hash.ToLower()
     if ($expected -and $actual -ne $expected.ToLower()) {
-      Write-Warning "Checksum mismatch: expected $expected got $actual"
+      Write-Error "Checksum mismatch: expected $expected got $actual - aborting"
+      return
     } else {
       Write-Host "Checksum OK" -ForegroundColor Green
     }
+  } else {
+    Write-Warning "No checksum entry for $artifact, skipping verification"
   }
 } catch { Write-Warning "Could not verify checksum: $_" }
 

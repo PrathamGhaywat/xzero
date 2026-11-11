@@ -9,6 +9,8 @@ typedef struct {
     // tool calls incremental
     cJSON *tool_calls; // array of {id, name, arguments}
     char *finish_reason;
+    char *error; // provider/transport error, malloc'd
+    int http_status;
     bool done;
     // usage
     int prompt_tokens;

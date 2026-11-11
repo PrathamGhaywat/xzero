@@ -105,15 +105,30 @@ xzero --resume <session-id> "continue"
 /sessions      - list sessions
 /new           - start new session
 /compact       - compact history
+/wallpaper [p] - set Windows wallpaper from path/URL (built-in if omitted)
 ```
 
 **Other flags:**
 
 ```bash
 xzero --list-sessions
+xzero --wallpaper [path-or-url]
 xzero --version
 xzero --help
 ```
+
+**Wallpaper easter egg (Windows):**
+
+```bash
+xzero --wallpaper                          # built-in "Sigma Wolf: Cringe Edition"
+xzero --wallpaper C:\art\wolf.bmp          # local image
+xzero --wallpaper https://example.com/wolf.jpg  # download and set
+```
+
+This is explicit and Windows-only; it never runs unless you ask for it. On
+Linux/macOS the image is still generated/downloaded and its path is printed,
+but the wallpaper is not changed. The same command is available in the REPL as
+`/wallpaper [path-or-url]`.
 
 ## Tools
 
@@ -128,7 +143,7 @@ The agent can call these tools (some require approval):
 | `edit` | Replace text in a file | yes |
 | `bash` | Run a shell command | yes |
 
-`bash` shows the exact command before running (e.g. `> bash [call_1] `$ pwd``) and captures output. On Windows, common commands like `pwd`/`ls`/`cat` are translated to `cd`/`dir`/`type`.
+`bash` shows the exact command before running (e.g. `> bash [call_1] `$ pwd``) and captures output. Commands have a 120s default timeout (the model can pass `timeout` in milliseconds). On Windows, common commands like `pwd`/`ls`/`cat` are translated to `cd`/`dir`/`type`.
 
 Large outputs are truncated with a reference to the full log on disk.
 
@@ -146,11 +161,13 @@ Long sessions are automatically compacted to keep context manageable.
 ```bash
 cmake --preset windows-msvc
 cmake --build build --config Release
-
-./build/Release/test_config && ./build/Release/test_stream
+ctest --test-dir build -C Release --output-on-failure
 ```
 
-See `CMakePresets.json` for all presets.
+Tests include session round-trips/compaction, wallpaper image generation, and
+fake-server integration tests (HTTP errors, approval, multi-iteration tool
+calls). Build with `-DBUILD_TESTING=OFF` to skip them. See
+`CMakePresets.json` for all presets.
 
 ## License
 

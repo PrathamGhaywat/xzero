@@ -1,3 +1,4 @@
+#undef NDEBUG
 #include "../src/util.h"
 #include "../src/config.h"
 #include <stdio.h>
@@ -32,6 +33,25 @@ int main(void){
     assert(strstr(capped2,"Full output")!=NULL);
     free(capped2);
     free(large);
+
+    // Tail-only capping (used by the bash tool) must use the full totals.
+    char *tail=(char*)malloc(60*1024);
+    memset(tail,'y',60*1024-1);
+    tail[60*1024-1]='\0';
+    size_t total_lines=0;
+    char *capped3=util_cap_output_total(tail, 60*1024-1, 1024*1024, 100000, "/tmp/full.txt", &trunc, &total_lines);
+    assert(trunc);
+    assert(total_lines==100000);
+    assert(strstr(capped3,"of 100000")!=NULL);
+    assert(strstr(capped3,"Full output")!=NULL);
+    free(capped3);
+    free(tail);
+
+    // util_path_join must tolerate aliasing out with a.
+    char joined[XZERO_PATH_MAX]="a/b";
+    util_path_join(joined, sizeof(joined), joined, "c");
+    assert(strcmp(joined,"a/b/c")==0);
+
     printf("test_config passed\n");
     return 0;
 }

@@ -47,10 +47,10 @@ static void grep_win(const char *pattern, const char *dir, char *out, size_t *ou
             fseek(f,0,SEEK_END);
             long sz=ftell(f);
             fseek(f,0,SEEK_SET);
-            if(sz>1024*1024) { fclose(f); continue; } // skip large
-            char *buf=(char*)malloc(sz+1);
+            if(sz<0 || sz>1024*1024) { fclose(f); continue; } // skip unknown/large
+            char *buf=(char*)malloc((size_t)sz+1);
             if(!buf){ fclose(f); continue; }
-            size_t got=fread(buf,1,sz,f);
+            size_t got=fread(buf,1,(size_t)sz,f);
             fclose(f);
             buf[got]='\0';
             // naive substring search (case-sensitive)

@@ -28,6 +28,7 @@ void session_add_touched(Session *s, const char *path);
 
 // Lever #3: compaction - keep 20k tokens window, summarize rest incrementally
 void session_maybe_compact(Session *s);
+void session_compact(Session *s, bool force);
 void session_update_summary(Session *s, const char *new_content);
 
 // Branch handling: tree of sessions - delete abandoned branch

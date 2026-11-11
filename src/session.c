@@ -21,7 +21,7 @@
 void session_get_dir(char *out, size_t n) {
     // Prefer ./.xzero/sessions if project-local exists or cwd is project
     struct stat st;
-    if (stat("./.xzero", &st)==0 && (st.st_mode & S_IFDIR)) {
+    if (stat("./.xzero", &st)==0 && S_ISDIR(st.st_mode)) {
         util_path_join(out, n, "./.xzero", "sessions");
         return;
     }
@@ -93,8 +93,11 @@ bool session_save(Session *s) {
     if (sep2 && (!sep || sep2>sep)) sep=sep2;
     if (sep) { *sep='\0'; util_mkdir_p(dir); }
 
-    // Write JSONL: one JSON per line (messages + metadata)
-    FILE *f = fopen(s->file_path, "wb");
+    // Write JSONL to a temp file and rename atomically so a crash cannot
+    // leave a truncated session behind.
+    char tmp_path[XZERO_PATH_MAX+8];
+    snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", s->file_path);
+    FILE *f = fopen(tmp_path, "wb");
     if (!f) return false;
     // metadata line
     cJSON *meta = cJSON_CreateObject();
@@ -117,11 +120,46 @@ bool session_save(Session *s) {
         char *line = cJSON_PrintUnformatted(msg);
         if (line) { fprintf(f, "%s\n", line); free(line); }
     }
-    fclose(f);
+    bool write_ok = (ferror(f)==0);
+    if (fclose(f)!=0) write_ok=false;
+    if (!write_ok) { remove(tmp_path); return false; }
 #ifndef _WIN32
-    // also save summary separately for quick load
+    chmod(tmp_path, 0600);
+    if (rename(tmp_path, s->file_path)!=0) { remove(tmp_path); return false; }
+#else
+    if (!MoveFileExA(tmp_path, s->file_path, MOVEFILE_REPLACE_EXISTING)) {
+        remove(tmp_path);
+        return false;
+    }
 #endif
     return true;
+}
+
+// Read a full line of arbitrary length. fgets' fixed buffer would split
+// large messages (assistant responses, escaped tool output) and then both
+// halves would fail to parse.
+static char *read_line_dynamic(FILE *f, size_t *out_len) {
+    size_t cap = 4096;
+    size_t len = 0;
+    char *buf = (char*)malloc(cap);
+    if (!buf) return NULL;
+    for (;;) {
+        if (len + 1 >= cap) {
+            size_t newcap = cap*2;
+            char *nb = (char*)realloc(buf, newcap);
+            if (!nb) { free(buf); return NULL; }
+            buf = nb;
+            cap = newcap;
+        }
+        if (!fgets(buf+len, (int)(cap-len), f)) {
+            if (len==0) { free(buf); return NULL; }
+            break;
+        }
+        len += strlen(buf+len);
+        if (len>0 && buf[len-1]=='\n') break;
+    }
+    if (out_len) *out_len = len;
+    return buf;
 }
 
 bool session_load(Session *s, const char *id_or_path) {
@@ -137,17 +175,19 @@ bool session_load(Session *s, const char *id_or_path) {
     util_str_copy(s->file_path, sizeof(s->file_path), path);
     if (s->messages) cJSON_Delete(s->messages);
     s->messages = cJSON_CreateArray();
+    for (int i=0;i<s->touched_count;i++) free(s->touched_files[i]);
     s->touched_count=0;
     s->summary[0]='\0';
     s->estimated_tokens=0;
 
-    char line[64*1024];
     bool first=true;
-    while (fgets(line, sizeof(line), f)) {
-        size_t len=strlen(line);
+    char *line=NULL;
+    size_t len=0;
+    while ((line=read_line_dynamic(f, &len))!=NULL) {
         while(len>0 && (line[len-1]=='\n' || line[len-1]=='\r')) line[--len]='\0';
-        if (len==0) continue;
+        if (len==0) { free(line); continue; }
         cJSON *obj = cJSON_Parse(line);
+        free(line);
         if (!obj) continue;
         if (first) {
             cJSON *type = cJSON_GetObjectItem(obj, "type");
@@ -195,9 +235,8 @@ bool session_append(Session *s, cJSON *msg) {
     char *tmp = cJSON_PrintUnformatted(dup);
     if (tmp) { s->estimated_tokens += util_estimate_tokens(tmp); free(tmp); }
     cJSON_AddItemToArray(s->messages, dup);
-    // track file touches if msg contains tool results referencing files
-    // Do incremental compaction check
-    session_maybe_compact(s);
+    // Compaction is intentionally not done here: it must only run at turn
+    // boundaries so tool_calls and their tool results stay together.
     return true;
 }
 
@@ -214,22 +253,28 @@ void session_update_summary(Session *s, const char *new_content) {
     size_t cur_len = strlen(s->summary);
     size_t add_len = strlen(new_content);
     if (cur_len + add_len + 4 < sizeof(s->summary)) {
-        if (cur_len>0) strcat(s->summary, "\n");
-        strcat(s->summary, new_content);
+        snprintf(s->summary + cur_len, sizeof(s->summary) - cur_len,
+                 "%s%s", cur_len ? "\n" : "", new_content);
     } else {
         // truncate oldest part
         size_t keep = sizeof(s->summary) - add_len - 8;
         if (keep < 512) keep=512;
+        if (keep > cur_len) keep=cur_len;
         memmove(s->summary, s->summary + cur_len - keep, keep);
         s->summary[keep]='\0';
-        strcat(s->summary, "\n");
-        strncat(s->summary, new_content, sizeof(s->summary)-strlen(s->summary)-1);
+        size_t used = keep;
+        if (used + 1 < sizeof(s->summary)) s->summary[used++]='\n';
+        size_t room = sizeof(s->summary) - used - 1;
+        size_t copy = add_len < room ? add_len : room;
+        memcpy(s->summary + used, new_content, copy);
+        used += copy;
+        s->summary[used]='\0';
     }
 }
 
-void session_maybe_compact(Session *s) {
+void session_compact(Session *s, bool force) {
     if (!s || !s->messages) return;
-    if (s->estimated_tokens < COMPACT_WINDOW_TOKENS) return;
+    if (!force && s->estimated_tokens < COMPACT_WINDOW_TOKENS) return;
     // Lever #3: delete instead of summarizing for abandoned, and incremental summary
     int n = cJSON_GetArraySize(s->messages);
     if (n < 4) return;
@@ -244,6 +289,19 @@ void session_maybe_compact(Session *s) {
         recent_tokens += toks;
         if (recent_tokens >= COMPACT_KEEP_RECENT) { keep_from=i; break; }
         if (i==1) keep_from=1;
+    }
+    if (keep_from <= 1) return;
+    // Never start the retained window on a tool result: that would orphan it
+    // from the assistant message carrying the matching tool_calls. Walk back
+    // over the whole tool-result run to include the assistant message.
+    while (keep_from > 1) {
+        cJSON *msg = cJSON_GetArrayItem(s->messages, keep_from);
+        cJSON *role = cJSON_GetObjectItem(msg, "role");
+        if (cJSON_IsString(role) && strcmp(role->valuestring, "tool")==0) {
+            keep_from--;
+            continue;
+        }
+        break;
     }
     if (keep_from <= 1) return;
     // Build summary incrementally from messages to be dropped (1 .. keep_from-1)
@@ -289,6 +347,10 @@ void session_maybe_compact(Session *s) {
     }
 }
 
+void session_maybe_compact(Session *s) {
+    session_compact(s, false);
+}
+
 bool session_branch(Session *s, const char *branch_id) {
     (void)s; (void)branch_id;
     // TODO: tree branch handling - for now just create new id
@@ -323,9 +385,13 @@ void session_list(char ids[][SESSION_ID_MAX], int *count, int max) {
     if (h==INVALID_HANDLE_VALUE) return;
     do {
         if (*count>=max) break;
-        char *dot = strrchr(fd.cFileName, '.');
+        size_t nl = strlen(fd.cFileName);
+        if (nl <= 6 || _stricmp(fd.cFileName + nl - 6, ".jsonl")!=0) continue;
+        char id[SESSION_ID_MAX];
+        util_str_copy(id, sizeof(id), fd.cFileName);
+        char *dot = strrchr(id, '.');
         if (dot) *dot='\0';
-        util_str_copy(ids[*count], SESSION_ID_MAX, fd.cFileName);
+        util_str_copy(ids[*count], SESSION_ID_MAX, id);
         (*count)++;
     } while (FindNextFileA(h, &fd));
     FindClose(h);
@@ -334,10 +400,14 @@ void session_list(char ids[][SESSION_ID_MAX], int *count, int max) {
     if (!d) return;
     struct dirent *ent;
     while ((ent=readdir(d)) && *count < max) {
-        if (strstr(ent->d_name, ".jsonl")) {
-            char *dot=strrchr(ent->d_name,'.');
+        size_t nl = strlen(ent->d_name);
+        // Only real session files, not our .jsonl.tmp temp files.
+        if (nl > 6 && strcmp(ent->d_name + nl - 6, ".jsonl")==0) {
+            char id[SESSION_ID_MAX];
+            util_str_copy(id, sizeof(id), ent->d_name);
+            char *dot=strrchr(id,'.');
             if(dot) *dot='\0';
-            util_str_copy(ids[*count], SESSION_ID_MAX, ent->d_name);
+            util_str_copy(ids[*count], SESSION_ID_MAX, id);
             (*count)++;
         }
     }

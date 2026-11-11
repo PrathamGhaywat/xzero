@@ -15,8 +15,11 @@ void stream_result_free(StreamResult *r) {
     free(r->content_delta);
     if (r->tool_calls) cJSON_Delete(r->tool_calls);
     free(r->finish_reason);
+    free(r->error);
     r->content_delta=NULL;
     r->tool_calls=NULL;
+    r->finish_reason=NULL;
+    r->error=NULL;
 }
 
 void stream_state_init(StreamState *s, StreamResult *r, bool print) {
@@ -44,8 +47,45 @@ static void append_content(StreamResult *r, const char *delta) {
     r->content_delta[r->content_len]='\0';
 }
 
+static void set_result_error(StreamResult *r, const char *message) {
+    if (!r || r->error || !message || !message[0]) return;
+    r->error = strdup(message);
+}
+
+static void handle_error_object(StreamResult *r, cJSON *err) {
+    if (!r || !err) return;
+    if (cJSON_IsString(err) && err->valuestring[0]) {
+        set_result_error(r, err->valuestring);
+        return;
+    }
+    if (cJSON_IsObject(err)) {
+        cJSON *msg = cJSON_GetObjectItem(err, "message");
+        if (cJSON_IsString(msg) && msg->valuestring[0]) {
+            set_result_error(r, msg->valuestring);
+            return;
+        }
+        cJSON *code = cJSON_GetObjectItem(err, "code");
+        if (cJSON_IsString(code) && code->valuestring[0]) {
+            char buf[256];
+            snprintf(buf, sizeof(buf), "API error: %s", code->valuestring);
+            set_result_error(r, buf);
+            return;
+        }
+    }
+    char *raw = cJSON_PrintUnformatted(err);
+    if (raw) {
+        set_result_error(r, raw);
+        free(raw);
+    }
+}
+
 static void handle_json_object(StreamState *s, cJSON *root) {
     if (!root) return;
+    cJSON *api_error = cJSON_GetObjectItem(root, "error");
+    if (api_error) {
+        handle_error_object(s->result, api_error);
+        return;
+    }
     cJSON *choices = cJSON_GetObjectItem(root, "choices");
     if (!cJSON_IsArray(choices) || cJSON_GetArraySize(choices)==0) {
         // check usage
@@ -98,11 +138,9 @@ static void handle_json_object(StreamState *s, cJSON *root) {
                     cJSON *name = cJSON_GetObjectItem(func, "name");
                     cJSON *args = cJSON_GetObjectItem(func, "arguments");
                     if (cJSON_IsString(name) && name->valuestring[0]) {
-                        // append name if existing non-empty? but name usually comes once
+                        // The name usually arrives once; only fill it in.
                         cJSON *cur = cJSON_GetObjectItem(existing, "name");
-                        if (cur && cJSON_IsString(cur) && cur->valuestring[0]==0) {
-                            cJSON_ReplaceItemInObject(existing, "name", cJSON_CreateString(name->valuestring));
-                        } else if (!cur || !cJSON_IsString(cur)) {
+                        if (!cur || !cJSON_IsString(cur) || cur->valuestring[0]==0) {
                             cJSON_ReplaceItemInObject(existing, "name", cJSON_CreateString(name->valuestring));
                         }
                     }
@@ -112,8 +150,7 @@ static void handle_json_object(StreamState *s, cJSON *root) {
                         size_t newlen = strlen(prev) + strlen(args->valuestring) + 1;
                         char *combined = (char*)malloc(newlen);
                         if (combined) {
-                            strcpy(combined, prev);
-                            strcat(combined, args->valuestring);
+                            snprintf(combined, newlen, "%s%s", prev, args->valuestring);
                             cJSON_ReplaceItemInObject(existing, "arguments", cJSON_CreateString(combined));
                             free(combined);
                         }
@@ -206,37 +243,54 @@ int stream_chat(const char *url, const char *json_body, const char * const *head
     if (!url || !json_body || !result) return -1;
     StreamState state;
     stream_state_init(&state, result, true);
-    int rc = http_post_stream(url, json_body, headers, stream_sse_callback, &state);
+    HttpResponse meta={0};
+    int rc = http_post_stream(url, json_body, headers, stream_sse_callback, &state, &meta);
+    result->http_status = (int)meta.status;
     // flush any remaining buffer as line (if no trailing \n)
     if (state.buf_len>0) {
         process_line(&state, state.buffer, state.buf_len);
     }
-    // If no streaming detected (e.g., server returned non-stream JSON), try parse as whole JSON
-    if (!result->content_delta && !result->done && cJSON_GetArraySize(result->tool_calls)==0) {
-        // The callback may not have been invoked as SSE - try direct parse
-        // This can happen if server ignores stream:true
-        // We treat the buffered data as possible JSON
-        if (state.buf_len>0 || state.buffer) {
-            // Not needed - http_post_stream already handled
+    // If the server ignored stream:true, or returned an HTTP error body, the
+    // response was not SSE and http_post_stream kept it for us to parse.
+    if (!result->error && meta.body && meta.body_len>0) {
+        cJSON *json = cJSON_Parse(meta.body);
+        if (json) {
+            handle_json_object(&state, json);
+            cJSON_Delete(json);
         }
     }
-    // Clean up empty tool calls (those with no name)
+    if (!result->error && meta.status >= 400) {
+        char buf[512];
+        if (meta.body && meta.body_len>0) {
+            snprintf(buf, sizeof(buf), "HTTP %ld: %.400s", meta.status, meta.body);
+        } else {
+            snprintf(buf, sizeof(buf), "HTTP %ld", meta.status);
+        }
+        set_result_error(result, buf);
+    }
+    if (!result->error && meta.truncated && !result->content_delta &&
+        cJSON_GetArraySize(result->tool_calls)==0) {
+        set_result_error(result, "response body too large to parse");
+    }
+    if (rc != 0 && !result->error) {
+        set_result_error(result, "connection failed");
+    }
+    if (rc == 0 && !result->error && !result->content_delta &&
+        cJSON_GetArraySize(result->tool_calls)==0) {
+        set_result_error(result, "server returned an empty response");
+    }
+    // Drop incomplete tool-call placeholders (streaming index gaps).
     if (result->tool_calls) {
-        // Remove placeholders with empty name and id
-        int sz = cJSON_GetArraySize(result->tool_calls);
-        // We'll keep but caller can check name empty
-        // Compact: if all empty, delete array and set to empty
-        bool any=false;
-        for (int i=0;i<sz;i++) {
+        for (int i=cJSON_GetArraySize(result->tool_calls)-1; i>=0; i--) {
             cJSON *tc = cJSON_GetArrayItem(result->tool_calls, i);
             cJSON *name = cJSON_GetObjectItem(tc, "name");
-            if (name && cJSON_IsString(name) && name->valuestring[0]) { any=true; break; }
-        }
-        if (!any) {
-            cJSON_Delete(result->tool_calls);
-            result->tool_calls = cJSON_CreateArray();
+            if (!name || !cJSON_IsString(name) || !name->valuestring[0]) {
+                cJSON_DeleteItemFromArray(result->tool_calls, i);
+            }
         }
     }
+    http_response_free(&meta);
     stream_state_free(&state);
+    if (result->error) return -1;
     return rc;
 }

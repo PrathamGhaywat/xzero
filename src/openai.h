@@ -15,5 +15,9 @@ int openai_test_connection(const XZeroConfig *cfg, char *err, size_t err_n);
 // Returns malloc'd JSON string (free with free())
 char *openai_build_payload(const XZeroConfig *cfg, cJSON *messages, cJSON *tools, bool stream);
 
+// Same, but allows omitting optional fields (stream_options,
+// parallel_tool_calls) for strict OpenAI-compatible servers.
+char *openai_build_payload_ex(const XZeroConfig *cfg, cJSON *messages, cJSON *tools, bool stream, bool include_optional);
+
 // System prompt (cache breakpoint 1)
 const char *openai_system_prompt(void);
