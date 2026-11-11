@@ -23,6 +23,8 @@ endif()
 # Options
 option(XZERO_USE_SYSTEM_CURL "Use system curl if found" ON)
 option(BUILD_TESTING "Build tests" ON)
+# Dependencies force BUILD_TESTING off/on below; remember the user's choice.
+set(XZERO_BUILD_TESTING ${BUILD_TESTING})
 
 include(FetchContent)
 
@@ -53,8 +55,8 @@ if(NOT CURL_FOUND)
     # This will be slow on first configure - allow fallback if download fails
     set(FETCHCONTENT_QUIET OFF)
     FetchContent_MakeAvailable(curl)
-# curl disables BUILD_TESTING globally - restore for our tests
-set(BUILD_TESTING ON CACHE BOOL "" FORCE)
+# curl disables BUILD_TESTING globally - restore the user's choice
+set(BUILD_TESTING ${XZERO_BUILD_TESTING} CACHE BOOL "" FORCE)
 endif()
 
 # cJSON via FetchContent - force static, no own tests
@@ -69,7 +71,7 @@ FetchContent_Declare(
     URL_HASH SHA256=3aa806844a03442c00769b83e99970be70fbef03735ff898f4811dd03b9f5ee5
 )
 FetchContent_MakeAvailable(cJSON)
-set(BUILD_TESTING ON CACHE BOOL "" FORCE)
+set(BUILD_TESTING ${XZERO_BUILD_TESTING} CACHE BOOL "" FORCE)
 
 # Sources
 set(XZERO_SOURCES
@@ -90,6 +92,7 @@ set(XZERO_SOURCES
     src/tools/bash.c
     src/tools/glob.c
     src/tools/grep.c
+    src/wallpaper.c
 )
 
 add_executable(xzero ${XZERO_SOURCES})
@@ -109,7 +112,7 @@ target_include_directories(xzero PRIVATE ${cjson_SOURCE_DIR})
 
 # Platform libs
 if(WIN32)
-    target_link_libraries(xzero PRIVATE ws2_32 wsock32 winhttp crypt32)
+    target_link_libraries(xzero PRIVATE ws2_32 wsock32 winhttp crypt32 user32)
 endif()
 
 if(UNIX)
@@ -117,8 +120,8 @@ if(UNIX)
 endif()
 
 # Tests
-if(BUILD_TESTING)
-    enable_testing()
+enable_testing()
+if(XZERO_BUILD_TESTING)
     add_executable(test_config tests/test_config.c src/config.c src/util.c)
     target_include_directories(test_config PRIVATE src ${cjson_SOURCE_DIR})
     target_link_libraries(test_config PRIVATE cjson)
@@ -144,6 +147,39 @@ if(BUILD_TESTING)
         target_link_libraries(test_stream PRIVATE m pthread)
     endif()
     add_test(NAME test_stream COMMAND test_stream)
+
+    add_executable(test_session tests/test_session.c src/session.c src/util.c)
+    target_include_directories(test_session PRIVATE src ${cjson_SOURCE_DIR})
+    target_link_libraries(test_session PRIVATE cjson)
+    if(WIN32)
+        target_link_libraries(test_session PRIVATE ws2_32)
+    else()
+        target_link_libraries(test_session PRIVATE m)
+    endif()
+    add_test(NAME test_session COMMAND test_session)
+
+    add_executable(test_wallpaper tests/test_wallpaper.c src/wallpaper.c src/util.c src/http_curl.c)
+    target_include_directories(test_wallpaper PRIVATE src ${cjson_SOURCE_DIR})
+    if(CURL_FOUND)
+        target_include_directories(test_wallpaper PRIVATE ${CURL_INCLUDE_DIRS})
+        target_link_libraries(test_wallpaper PRIVATE ${CURL_LIBRARIES})
+    else()
+        target_include_directories(test_wallpaper PRIVATE ${curl_SOURCE_DIR}/include)
+        target_link_libraries(test_wallpaper PRIVATE libcurl)
+    endif()
+    if(WIN32)
+        target_link_libraries(test_wallpaper PRIVATE ws2_32 wsock32 winhttp crypt32 user32)
+    else()
+        target_link_libraries(test_wallpaper PRIVATE m pthread)
+    endif()
+    add_test(NAME test_wallpaper COMMAND test_wallpaper)
+
+    find_package(Python3 QUIET COMPONENTS Interpreter)
+    if(Python3_Interpreter_FOUND)
+        add_test(NAME test_integration
+                 COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration_test.py $<TARGET_FILE:xzero>)
+        set_tests_properties(test_integration PROPERTIES TIMEOUT 180)
+    endif()
 endif()
 
 message(STATUS "xzero configured: C_STANDARD=${CMAKE_C_STANDARD} CURL_FOUND=${CURL_FOUND}")

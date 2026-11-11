@@ -61,6 +61,12 @@ void util_path_join(char *out, size_t out_n, const char *a, const char *b) {
     if (!out || out_n==0) return;
     if (!a || !a[0]) { util_str_copy(out, out_n, b?b:""); return; }
     if (!b || !b[0]) { util_str_copy(out, out_n, a); return; }
+    // Callers sometimes pass `out` as `a` (or `b`). snprintf with overlapping
+    // source/destination is undefined, so copy aliased inputs first.
+    char a_buf[XZERO_PATH_MAX];
+    char b_buf[XZERO_PATH_MAX];
+    if ((const char*)out == a) { util_str_copy(a_buf, sizeof(a_buf), a); a = a_buf; }
+    if ((const char*)out == b) { util_str_copy(b_buf, sizeof(b_buf), b); b = b_buf; }
 #ifdef _WIN32
     const char sep = '\\';
 #else
@@ -206,7 +212,7 @@ size_t util_count_lines(const char *s, size_t n) {
     return c;
 }
 
-char *util_cap_output(const char *full_output, size_t full_len, const char *full_path_hint, bool *truncated, size_t *out_lines) {
+char *util_cap_output_total(const char *full_output, size_t full_len, size_t total_bytes, size_t total_lines, const char *full_path_hint, bool *truncated, size_t *out_lines) {
     if (!full_output) {
         if (truncated) *truncated=false;
         if (out_lines) *out_lines=0;
@@ -215,9 +221,12 @@ char *util_cap_output(const char *full_output, size_t full_len, const char *full
         return empty;
     }
     if (full_len==0) full_len = strlen(full_output);
-    size_t lines = util_count_lines(full_output, full_len);
+    if (total_bytes==0) total_bytes = full_len;
+    size_t buffered_lines = util_count_lines(full_output, full_len);
+    size_t lines = total_lines ? total_lines : buffered_lines;
     if (out_lines) *out_lines = lines;
-    bool need_cap = (full_len > CAP_BYTES) || (lines > CAP_LINES);
+    bool need_cap = (total_bytes > CAP_BYTES) || (lines > CAP_LINES) ||
+                    (full_len > CAP_BYTES) || (buffered_lines > CAP_LINES);
     if (truncated) *truncated = need_cap;
     if (!need_cap) {
         char *out = (char*)malloc(full_len+1);
@@ -232,8 +241,8 @@ char *util_cap_output(const char *full_output, size_t full_len, const char *full
     // First, if bytes over, start at full_len - CAP_BYTES
     if (full_len > CAP_BYTES) tail_start = full_len - CAP_BYTES;
     // Then, if lines over, find start of last CAP_LINES lines
-    if (lines > CAP_LINES) {
-        size_t target_line = lines - CAP_LINES;
+    if (buffered_lines > CAP_LINES) {
+        size_t target_line = buffered_lines - CAP_LINES;
         size_t cur = 0;
         for (size_t i=0;i<full_len;i++) {
             if (full_output[i]=='\n') {
@@ -247,11 +256,12 @@ char *util_cap_output(const char *full_output, size_t full_len, const char *full
         }
     }
     size_t tail_len = full_len - tail_start;
+    size_t tail_lines = util_count_lines(full_output+tail_start, tail_len);
+    size_t first_line = (lines > tail_lines) ? (lines - tail_lines + 1) : 1;
     const char *hint = full_path_hint ? full_path_hint : "/tmp/xzero_output.txt";
     char footer[512];
-    // Estimate original lines
-    snprintf(footer, sizeof(footer), "\n[Showing lines %zu-%zu of %zu. Full output: %s]\n", 
-        lines - util_count_lines(full_output+tail_start, tail_len) + 1, lines, lines, hint);
+    snprintf(footer, sizeof(footer), "\n[Showing lines %zu-%zu of %zu. Full output: %s]\n",
+        first_line, lines, lines, hint);
     size_t footer_len = strlen(footer);
     char *out = (char*)malloc(tail_len + footer_len + 1);
     if (!out) return NULL;
@@ -259,6 +269,15 @@ char *util_cap_output(const char *full_output, size_t full_len, const char *full
     memcpy(out+tail_len, footer, footer_len);
     out[tail_len+footer_len]='\0';
     return out;
+}
+
+char *util_cap_output(const char *full_output, size_t full_len, const char *full_path_hint, bool *truncated, size_t *out_lines) {
+    if (!full_output) {
+        return util_cap_output_total(NULL, 0, 0, 0, full_path_hint, truncated, out_lines);
+    }
+    if (full_len==0) full_len = strlen(full_output);
+    size_t lines = util_count_lines(full_output, full_len);
+    return util_cap_output_total(full_output, full_len, full_len, lines, full_path_hint, truncated, out_lines);
 }
 
 char *util_spill_and_receipt(const char *full_output, size_t full_len, const char *spill_path) {

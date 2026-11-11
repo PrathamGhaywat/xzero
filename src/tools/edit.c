@@ -33,9 +33,21 @@ ToolResult tool_edit(cJSON *args, Session *session) {
     fseek(f,0,SEEK_END);
     long sz=ftell(f);
     fseek(f,0,SEEK_SET);
-    char *data=(char*)malloc(sz+1);
+    if(sz<0){
+        fclose(f);
+        r.content=strdup("error: cannot determine file size");
+        r.is_error=true;
+        return r;
+    }
+    if(sz > 64*1024*1024){
+        fclose(f);
+        r.content=strdup("error: file too large (limit 64MB)");
+        r.is_error=true;
+        return r;
+    }
+    char *data=(char*)malloc((size_t)sz+1);
     if(!data){ fclose(f); r.content=strdup("error: oom"); r.is_error=true; return r; }
-    size_t got=fread(data,1,sz,f);
+    size_t got=fread(data,1,(size_t)sz,f);
     fclose(f);
     data[got]='\0';
 

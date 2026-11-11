@@ -40,6 +40,11 @@ bool util_path_is_within_cwd(const char *path);
 // If truncated, output is last 50KB/2000 lines + footer with full_path hint.
 char *util_cap_output(const char *full_output, size_t full_len, const char *full_path_hint, bool *truncated, size_t *out_lines);
 
+// Same as util_cap_output, but `data` may be only the tail of a larger output.
+// total_bytes/total_lines describe the full output (used for the truncation
+// decision and footer); 0 means "unknown, use data".
+char *util_cap_output_total(const char *data, size_t data_len, size_t total_bytes, size_t total_lines, const char *full_path_hint, bool *truncated, size_t *out_lines);
+
 // Human vs model split: write full to file, return receipt
 // Writes full_output to spill file if truncated, returns receipt string for model
 char *util_spill_and_receipt(const char *full_output, size_t full_len, const char *spill_path);

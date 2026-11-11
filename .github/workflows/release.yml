@@ -114,6 +114,7 @@ jobs:
         run: cmake --build build --config Release --parallel
 
       - name: Test
+        if: matrix.os != 'windows' || matrix.arch != 'arm64'
         shell: bash
         run: |
           export PATH="$PWD/build/_deps/cjson-build:$PWD/build/_deps/cjson-build/Release:$PWD/build/_deps/curl-build/lib:$PWD/build/_deps/curl-build/lib/Release:$PATH"

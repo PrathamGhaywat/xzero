@@ -9,6 +9,7 @@
 #include "session.h"
 #include "agent.h"
 #include "repl.h"
+#include "wallpaper.h"
 
 #ifdef _WIN32
 #include <windows.h>
@@ -46,6 +47,7 @@ static void print_usage(const char *prog){
     printf("  --resume ID         Resume session ID\n");
     printf("  --list-sessions     List sessions\n");
     printf("  --test              Test connection and exit\n");
+    printf("  --wallpaper [IMG]   Set Windows wallpaper from path/URL (built-in if omitted)\n");
     printf("  --help              Show help\n");
     printf("  --version           Show version\n");
     printf("\nConfig: XZERO_BASE_URL, XZERO_API_KEY, XZERO_MODEL env vars override file.\n");
@@ -65,7 +67,8 @@ int main(int argc, char **argv){
     const char *override_path=NULL;
     const char *cli_base=NULL, *cli_key=NULL, *cli_model=NULL;
     const char *resume_id=NULL;
-    bool do_test=false, do_list=false;
+    bool do_test=false, do_list=false, do_wallpaper=false;
+    const char *wallpaper_arg=NULL;
     const char *prompt_arg=NULL;
 
     for(int i=1;i<argc;i++){
@@ -78,6 +81,10 @@ int main(int argc, char **argv){
         else if(strcmp(argv[i],"--resume")==0 && i+1<argc) resume_id=argv[++i];
         else if(strcmp(argv[i],"--test")==0) do_test=true;
         else if(strcmp(argv[i],"--list-sessions")==0) do_list=true;
+        else if(strcmp(argv[i],"--wallpaper")==0){
+            do_wallpaper=true;
+            if(i+1<argc && argv[i+1][0]!='-') wallpaper_arg=argv[++i];
+        }
         else if(argv[i][0]!='-'){
             // first non-flag is prompt (join rest)
             prompt_arg=argv[i];
@@ -100,6 +107,18 @@ int main(int argc, char **argv){
         }
     }
 
+    if(do_wallpaper){
+        char werr[512];
+        if(wallpaper_set(wallpaper_arg, werr, sizeof(werr))!=0){
+            fprintf(stderr,"wallpaper: %s\n", werr);
+            http_global_cleanup();
+            return 1;
+        }
+        printf("Wallpaper updated.\n");
+        http_global_cleanup();
+        return 0;
+    }
+
     if(do_list){
         char ids[64][64];
         int cnt=0;
@@ -111,17 +130,12 @@ int main(int argc, char **argv){
     }
 
     config_load(&cfg, override_path);
-    if(cli_base) strncpy(cfg.base_url, cli_base, sizeof(cfg.base_url)-1);
-    if(cli_key) strncpy(cfg.api_key, cli_key, sizeof(cfg.api_key)-1);
-    if(cli_model) strncpy(cfg.model, cli_model, sizeof(cfg.model)-1);
-
-    // Interactive prompt if missing (unless --test wants to show error)
-    bool need_prompt = false;
-    if(!cfg.base_url[0]) need_prompt=true;
-    // base_url has default, so only prompt if user explicitly deleted?
+    if(cli_base) util_str_copy(cfg.base_url, sizeof(cfg.base_url), cli_base);
+    if(cli_key) util_str_copy(cfg.api_key, sizeof(cfg.api_key), cli_key);
+    if(cli_model) util_str_copy(cfg.model, sizeof(cfg.model), cli_model);
 
     char cfg_path[XZERO_PATH_MAX];
-    if(override_path) strncpy(cfg_path, override_path, sizeof(cfg_path)-1);
+    if(override_path) util_str_copy(cfg_path, sizeof(cfg_path), override_path);
     else config_get_global_path(cfg_path,sizeof(cfg_path));
     bool cfg_exists = config_exists(override_path ? override_path : cfg_path) || config_exists("./xzero.json") || config_exists("./.xzero/config.json");
 
@@ -156,16 +170,16 @@ int main(int argc, char **argv){
         printf("xzero first run — configure OpenAI compatible endpoint\n");
         char buf[XZERO_URL_MAX];
         if(prompt_input("Enter OpenAI base URL", cfg.base_url, buf, sizeof(buf))){
-            strncpy(cfg.base_url, buf, sizeof(cfg.base_url)-1);
+            util_str_copy(cfg.base_url, sizeof(cfg.base_url), buf);
         }
         char keybuf[XZERO_KEY_MAX];
         if(prompt_password("Enter API Key (leave blank if none): ", keybuf, sizeof(keybuf))){
-            strncpy(cfg.api_key, keybuf, sizeof(cfg.api_key)-1);
+            util_str_copy(cfg.api_key, sizeof(cfg.api_key), keybuf);
             memset(keybuf,0,sizeof(keybuf));
         }
         char modelbuf[XZERO_MODEL_MAX];
         if(prompt_input("Enter model", cfg.model, modelbuf, sizeof(modelbuf))){
-            strncpy(cfg.model, modelbuf, sizeof(cfg.model)-1);
+            util_str_copy(cfg.model, sizeof(cfg.model), modelbuf);
         }
         char err[256];
         if(!config_validate(&cfg, err, sizeof(err))){
@@ -220,7 +234,7 @@ int main(int argc, char **argv){
             free(sess);
             sess=session_create(cfg.model);
         }
-        strncpy(sess->model, cfg.model, sizeof(sess->model)-1);
+        util_str_copy(sess->model, sizeof(sess->model), cfg.model);
     } else {
         sess=session_create(cfg.model);
     }

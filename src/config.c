@@ -50,17 +50,12 @@ void config_get_global_path(char *out, size_t n) {
         struct passwd *pw = getpwuid(getuid());
         if (pw) home = pw->pw_dir;
     }
-    // macOS prefers Library/Application Support but also support XDG
+    // macOS: Application Support is the default (XDG_CONFIG_HOME still wins
+    // when explicitly set, see above).
 #ifdef __APPLE__
     if (home) {
-        char tmp[XZERO_PATH_MAX];
-        util_path_join(tmp, sizeof(tmp), home, "Library/Application Support/xzero/config.json");
-        // check if exists, otherwise use XDG
-        struct stat st;
-        if (stat(tmp, &st)==0) {
-            util_str_copy(out, n, tmp);
-            return;
-        }
+        util_path_join(out, n, home, "Library/Application Support/xzero/config.json");
+        return;
     }
 #endif
     if (home) {

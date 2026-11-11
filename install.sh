@@ -2,10 +2,10 @@
 # xzero installer — POSIX sh
 # Usage: curl -fsSL https://raw.githubusercontent.com/REPO/main/install.sh | sh
 #        curl -fsSL .../install.sh | sh -s -- v0.1.0
-# Env: XZERO_REPO (default: xzero/xzero), XZERO_INSTALL_DIR (default: $HOME/.local/bin), GITHUB_TOKEN
+# Env: XZERO_REPO (default: PrathamGhaywat/xzero), XZERO_INSTALL_DIR (default: $HOME/.local/bin), GITHUB_TOKEN
 set -eu
 
-REPO="${XZERO_REPO:-xzero/xzero}"
+REPO="${XZERO_REPO:-PrathamGhaywat/xzero}"
 INSTALL_DIR="${XZERO_INSTALL_DIR:-$HOME/.local/bin}"
 VERSION="${1:-latest}"
 
@@ -108,13 +108,26 @@ elif command -v wget >/dev/null 2>&1; then
 fi
 
 # Verify checksum if available
-if [ -f "$TMPDIR/SHA256SUMS" ] && command -v sha256sum >/dev/null 2>&1; then
+if [ -f "$TMPDIR/SHA256SUMS" ]; then
   # SHA256SUMS contains entries for all archs; extract matching line
-  if grep -q "$ARTIFACT" "$TMPDIR/SHA256SUMS" 2>/dev/null; then
-    (cd "$TMPDIR" && grep "$ARTIFACT" SHA256SUMS | sha256sum -c -) || echo "Warning: checksum mismatch" >&2
+  checksum_line="$(grep "  ${ARTIFACT}\$" "$TMPDIR/SHA256SUMS" 2>/dev/null || true)"
+  if [ -z "$checksum_line" ]; then
+    echo "Warning: no checksum entry for $ARTIFACT, skipping verification" >&2
+  elif command -v sha256sum >/dev/null 2>&1; then
+    if ! (cd "$TMPDIR" && printf '%s\n' "$checksum_line" | sha256sum -c -); then
+      echo "Checksum verification failed for $ARTIFACT - aborting" >&2
+      exit 1
+    fi
+  elif command -v shasum >/dev/null 2>&1; then
+    if ! (cd "$TMPDIR" && printf '%s\n' "$checksum_line" | shasum -a 256 -c -); then
+      echo "Checksum verification failed for $ARTIFACT - aborting" >&2
+      exit 1
+    fi
+  else
+    echo "Warning: no sha256sum/shasum available, skipping verification" >&2
   fi
-elif command -v shasum >/dev/null 2>&1 && [ -f "$TMPDIR/SHA256SUMS" ]; then
-  (cd "$TMPDIR" && grep "$ARTIFACT" SHA256SUMS | shasum -a 256 -c -) || echo "Warning: checksum mismatch" >&2
+else
+  echo "Warning: could not download SHA256SUMS, skipping verification" >&2
 fi
 
 # Extract

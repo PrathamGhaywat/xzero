@@ -1,3 +1,4 @@
+#undef NDEBUG
 #include "../src/stream.h"
 #include <stdio.h>
 #include <string.h>

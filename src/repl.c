@@ -1,5 +1,7 @@
 #include "repl.h"
 #include "agent.h"
+#include "util.h"
+#include "wallpaper.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -13,13 +15,14 @@ static void print_help(void){
     printf("  /sessions      List sessions\n");
     printf("  /new           New session (abandoned branch deleted)\n");
     printf("  /compact       Force compaction\n");
+    printf("  /wallpaper [p] Set Windows wallpaper from path/URL (built-in if omitted)\n");
     printf("\n");
 }
 
 int repl_run(XZeroConfig *cfg, Session *session){
     if(!cfg || !session) return -1;
     printf("xzero v0.1 — model %s @ %s\n", cfg->model, cfg->base_url);
-    printf("Session %s  |  type /help for commands, Ctrl+C to interrupt\n\n", session->id);
+    printf("Session %s  |  type /help for commands, Ctrl+C to exit\n\n", session->id);
 
     char line[8192];
     AgentOpts opts={cfg, session, 32, false};
@@ -45,7 +48,11 @@ int repl_run(XZeroConfig *cfg, Session *session){
             if(strncmp(p,"/model ",7)==0){
                 const char *m=p+7;
                 while(*m==' ') m++;
-                if(*m){ strncpy(cfg->model, m, sizeof(cfg->model)-1); printf("Model -> %s\n", cfg->model); }
+                if(*m){
+                    util_str_copy(cfg->model, sizeof(cfg->model), m);
+                    util_str_copy(session->model, sizeof(session->model), m);
+                    printf("Model -> %s\n", cfg->model);
+                }
                 continue;
             }
             if(strcmp(p,"/sessions")==0){
@@ -69,8 +76,8 @@ int repl_run(XZeroConfig *cfg, Session *session){
                     // Instead, free old messages and copy
                     if(session->messages) cJSON_Delete(session->messages);
                     session->messages=ns->messages; ns->messages=NULL;
-                    strncpy(session->id, ns->id, sizeof(session->id)-1);
-                    strncpy(session->file_path, ns->file_path, sizeof(session->file_path)-1);
+                    util_str_copy(session->id, sizeof(session->id), ns->id);
+                    util_str_copy(session->file_path, sizeof(session->file_path), ns->file_path);
                     session->estimated_tokens=ns->estimated_tokens;
                     for(int i=0;i<session->touched_count;i++) free(session->touched_files[i]);
                     session->touched_count=ns->touched_count;
@@ -82,8 +89,23 @@ int repl_run(XZeroConfig *cfg, Session *session){
                 continue;
             }
             if(strcmp(p,"/compact")==0){
-                session_maybe_compact(session);
+                session_compact(session, true);
                 printf("Compacted. Tokens ~%zu, messages %d\n", session->estimated_tokens, session->messages? cJSON_GetArraySize(session->messages):0);
+                continue;
+            }
+            if(strcmp(p,"/wallpaper")==0 || strncmp(p,"/wallpaper ",11)==0){
+                const char *arg=NULL;
+                if(p[10]==' '){
+                    arg=p+11;
+                    while(*arg==' ') arg++;
+                    if(!*arg) arg=NULL;
+                }
+                char werr[512];
+                if(wallpaper_set(arg, werr, sizeof(werr))==0){
+                    printf("Wallpaper updated.\n");
+                } else {
+                    printf("Wallpaper: %s\n", werr);
+                }
                 continue;
             }
             printf("Unknown command %s (try /help)\n", p);
